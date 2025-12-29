@@ -1,0 +1,45 @@
+name: Monitoramento Renault
+
+# GATILHOS: Quando isso deve rodar?
+on:
+  # Permite rodar manualmente clicando num botão (ótimo para testar)
+  workflow_dispatch:
+  # Agendamento automático (Cron Job)
+  schedule:
+    # Roda todo dia às 12:00 UTC (que é 09:00 da manhã no Brasil)
+    - cron: '0 12 * * *'
+
+jobs:
+  execucao-do-teste:
+    runs-on: ubuntu-latest # O GitHub empresta uma máquina Linux (Ubuntu)
+    
+    steps:
+      # 1. O robô baixa seu código para a máquina dele
+      - name: Baixar código (Checkout)
+        uses: actions/checkout@v4
+
+      # 2. O robô instala o Python
+      - name: Instalar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      # 3. O robô lê sua lista de compras e instala as bibliotecas
+      - name: Instalar Dependências
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium # Instala o navegador necessário
+
+      # 4. O robô roda o seu script
+      - name: Rodar Teste Automatizado
+        run: python test_renault_store.py
+
+      # 5. O robô pega o Excel gerado e guarda para você baixar (Artifact)
+      - name: Salvar Relatório (Upload)
+        uses: actions/upload-artifact@v4
+        # Executa mesmo se o teste falhar (para você ver o que houve)
+        if: always() 
+        with:
+          name: relatorio-renault
+          path: "*.xlsx" # Pega qualquer arquivo Excel na pasta
+          retention-days: 5 # Guarda o arquivo por 5 dias
