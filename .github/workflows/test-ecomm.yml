@@ -27,15 +27,28 @@ jobs:
         run: |
           python -m playwright install --with-deps
 
-      - name: Run e-comm test
+      # Política de PR: não falhar por ausência de imagens
+      - name: Run e-comm test (PR - tolerant)
+        if: github.event_name == 'pull_request'
         env:
-          # Altere para a URL real do e-comm
           ECOMM_URL: https://store.renault.com.ar/
           HEADLESS: "true"
+          FAIL_ON_NO_IMAGE: "false"
+        run: |
+          python test_renault_store.py
+
+      # Política para push/main e workflow_dispatch: estrito (falha se não houver imagens)
+      - name: Run e-comm test (non-PR - strict)
+        if: github.event_name != 'pull_request'
+        env:
+          ECOMM_URL: https://store.renault.com.ar/
+          HEADLESS: "true"
+          FAIL_ON_NO_IMAGE: "true"
         run: |
           python test_renault_store.py
 
       - name: Upload report and screenshots
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: relatorios-ecomm
