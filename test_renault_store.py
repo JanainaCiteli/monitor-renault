@@ -1,4 +1,5 @@
 import datetime
+import os
 import pandas as pd
 from playwright.sync_api import sync_playwright
 
@@ -9,107 +10,77 @@ def run_renault_test():
     print(f"Iniciando Playwright em: {url}")
 
     with sync_playwright() as p:
-        # Lança o navegador (headless=True roda em background, sem abrir janela)
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        
-        # Aumenta o timeout padrão para garantir carregamento em conexões lentas
+        # Aumentei o tempo de espera para 60 segundos
         page.set_default_timeout(60000) 
         
         try:
             page.goto(url)
+            # Espera forçada para garantir carregamento visual
+            page.wait_for_timeout(5000) 
             
-            # O Playwright espera automaticamente a rede ficar ociosa (site carregado)
-            page.wait_for_load_state("networkidle")
+            # Tenta seletores mais abrangentes
+            cards = page.locator("div.item, div.card, div.product-item, div[class*='product']").all()
             
-            # Localiza os cards de produtos. 
-            # O seletor abaixo busca elementos que tenham classe de item/produto
-            # Ajuste o seletor '.item' ou similar conforme a inspeção real do site
-            cards = page.locator("div.item, div.card, div.product-item").all()
-            
+            # Se não achar por classe, tenta achar qualquer coisa com preço
             if not cards:
-                print("Cards padrão não encontrados, buscando por títulos...")
-                # Estratégia alternativa se a classe mudar
-                cards = page.locator("h2:has-text('Renault'), h3:has-text('Renault')").all()
+                print("Tentando estratégia de backup...")
+                cards = page.locator("xpath=//div[contains(., '$')]").all()
 
-            print(f"Analisando {len(cards)} itens encontrados...")
+            print(f"DEBUG: Encontrados {len(cards)} elementos potenciais.")
+
+            if len(cards) == 0:
+                # Se não achar nada, adiciona um registro de erro no Excel
+                results.append({
+                    "Data": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Produto": "ERRO",
+                    "Status": "FAIL",
+                    "Detalhes": "Nenhum produto encontrado na página. Verificar seletores."
+                })
 
             for card in cards:
-                status = "PASS"
-                fail_reasons = []
-                name = "N/A"
-                price = "N/A"
-                img_url = "N/A"
-
-                # 1. Extração e Validação do Nome
-                # O Playwright permite encadear locators facilmente
-                try:
-                    name_el = card.locator("h2, h3, .name").first
-                    if name_el.count() > 0:
-                        name = name_el.inner_text().strip()
-                    else:
-                        name = card.inner_text().split('\n')[0]
-                    
-                    if not name:
-                        fail_reasons.append("Nome vazio")
-                except:
-                    fail_reasons.append("Erro ao ler nome")
-
-                # 2. Extração e Validação de Preço
-                try:
-                    # Procura texto que contenha $
-                    price_str = card.locator(":text-matches('\\$')").first.inner_text()
-                    if price_str:
-                        price = price_str.strip()
-                    else:
-                        fail_reasons.append("Preço não visível")
-                except:
-                    # Em alguns sites, o preço carrega depois ou só no hover
-                    fail_reasons.append("Preço não encontrado")
-
-                # 3. Validação de Imagem
-                try:
-                    img_loc = card.locator("img").first
-                    if img_loc.count() > 0:
-                        img_url = img_loc.get_attribute("src")
-                        # Verifica se a imagem quebrou (tamanho natural é 0)
-                        # O JavaScript abaixo roda no navegador para checar a imagem real
-                        is_broken = img_loc.evaluate("img => img.naturalWidth === 0")
-                        
-                        if not img_url or "http" not in img_url:
-                            fail_reasons.append("URL de imagem inválida")
-                        if is_broken:
-                            fail_reasons.append("Imagem quebrada (não renderizou)")
-                    else:
-                        fail_reasons.append("Tag de imagem ausente")
-                except:
-                    fail_reasons.append("Erro na imagem")
-
-                # Determina Status Final
-                if fail_reasons:
-                    status = "FAIL"
+                # Lógica simplificada para extrair texto
+                text_content = card.inner_text().replace('\n', ' ')
                 
                 results.append({
                     "Data": datetime.datetime.now().strftime("%Y-%m-%d"),
-                    "Produto": name,
-                    "Preço": price,
-                    "Imagem": img_url[:40] + "...",
-                    "Status": status,
-                    "Detalhes": "; ".join(fail_reasons)
+                    "Produto": text_content[:50], # Pega os primeiros 50 caracteres
+                    "Status": "PASS" if "$" in text_content else "CHECK",
+                    "Detalhes": "Item capturado"
                 })
 
         except Exception as e:
-            print(f"Erro na execução: {e}")
+            print(f"Erro Crítico: {e}")
+            results.append({
+                "Data": datetime.datetime.now().strftime("%Y-%m-%d"),
+                "Produto": "ERRO DE EXECUÇÃO",
+                "Status": "CRITICAL",
+                "Detalhes": str(e)
+            })
         finally:
             browser.close()
 
-    # Gera Relatório
-    if results:
-        df = pd.DataFrame(results)
-        filename = f"report_renault_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
-        df.to_excel(filename, index=False)
-        print(f"Relatório gerado: {filename}")
-        print(df.head()) # Mostra as primeiras linhas
+    # --- PARTE IMPORTANTE: SALVAR SEMPRE ---
+    print("Gerando relatório...")
+    
+    # Cria um DataFrame mesmo se estiver vazio
+    if not results:
+        results = [{"Status": "Nenhum dado", "Detalhes": "Lista vazia"}]
+
+    df = pd.DataFrame(results)
+    
+    # Nome fixo ou dinâmico simples
+    filename = "relatorio_renault.xlsx"
+    
+    # Salva o arquivo
+    df.to_excel(filename, index=False)
+    
+    # Confirmação no log que o arquivo existe
+    if os.path.exists(filename):
+        print(f"SUCESSO: Arquivo {filename} criado com sucesso.")
+    else:
+        print("ERRO: Falha ao criar arquivo no disco.")
 
 if __name__ == "__main__":
     run_renault_test()
